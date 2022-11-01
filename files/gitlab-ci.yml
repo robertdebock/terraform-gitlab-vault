@@ -1,0 +1,94 @@
+---
+
+default:
+  image: "registry.gitlab.com/gitlab-org/terraform-images/stable:latest"
+  cache:
+    - key: plan
+      paths:
+        - plan.cache
+        - plan.json
+        - .cache/pip
+
+  before_script:
+    - apk add libcap vault jq
+    - setcap cap_ipc_lock= /usr/sbin/vault
+    - export VAULT_TOKEN="$(vault write -field=token auth/${VAULT_JWT_PATH}/login role=${VAULT_ROLE} jwt=$CI_JOB_JWT)"
+    - export CREDS="$(vault read -format=json aws/creds/${VAULT_ROLE})"
+    - export AWS_ACCESS_KEY_ID=$(echo ${CREDS} | jq -r .data.access_key)
+    - export AWS_SECRET_ACCESS_KEY=$(echo ${CREDS} | jq -r .data.secret_key)
+    - apk add --no-cache python3 py3-pip
+    - pip3 install awscli
+    - pip3 install virtualenv
+    - virtualenv venv
+    - source venv/bin/activate
+
+variables:
+  TF_STATE_NAME: default
+  TF_CACHE_KEY: default
+  TF_HTTP_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}
+  TF_HTTP_LOCK_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock
+  TF_HTTP_LOCK_METHOD: POST
+  TF_HTTP_UNLOCK_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock
+  TF_HTTP_UNLOCK_METHOD: DELETE
+  TF_HTTP_USERNAME: gitlab-ci-token
+  TF_HTTP_PASSWORD: ${CI_JOB_TOKEN}
+  TF_HTTP_RETRY_WAIT_MIN: 5
+  VAULT_ADDR: "https://vault.aws.adfinis.cloud:8200/"
+  VAULT_ROLE: gitlab
+  VAULT_JWT_PATH: jwt
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+stages:
+  - validate
+  - prepare
+  - build
+  - deploy
+  - cleanup
+
+validate:
+  stage: validate
+  script:
+    - gitlab-terraform validate
+  cache: {}
+  before_script: []
+
+init:
+  stage: prepare
+  script:
+    - gitlab-terraform init
+  needs:
+    - job: validate
+  cache: {}
+  before_script: []
+
+plan:
+  stage: build
+  script:
+    - gitlab-terraform plan
+    - gitlab-terraform plan-json
+  artifacts:
+    name: plan
+    paths:
+      - plan.cache
+    reports:
+      terraform: plan.json
+  needs:
+    - init
+
+apply:
+  stage: deploy
+  script:
+    - gitlab-terraform apply
+  when: manual
+  only:
+    - main
+  needs:
+    - plan
+
+destroy:
+  stage: cleanup
+  script:
+    - gitlab-terraform destroy
+  when: manual
+  only:
+    - main
