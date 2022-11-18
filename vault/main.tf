@@ -32,7 +32,7 @@ resource "aws_route53_record" "validation" {
 # Call the module.
 module "vault" {
   source                      = "robertdebock/vault/aws"
-  version                     = "10.1.5"
+  version                     = "10.1.6"
   vault_aws_certificate_arn   = aws_acm_certificate.default.arn
   vault_enable_cloudwatch     = true
   vault_asg_instance_lifetime = 86400
